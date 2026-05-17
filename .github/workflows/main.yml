@@ -1,14 +1,20 @@
-name: DxAutoInstaller自动构建
+# DxAutoInstaller 自动构建工作流 - 直接可用版
+# 无需修改任何内容，复制粘贴即可使用
+name: DxAutoInstaller 自动构建
 
+# 触发条件
 on:
+  # 推送到master分支时自动构建
   push:
-    branches: [ master, main ]
+    branches: [ master ]
     paths-ignore:
       - '**.md'
       - 'LICENSE'
       - '.gitignore'
+  # 提交PR时自动构建
   pull_request:
-    branches: [ master, main ]
+    branches: [ master ]
+  # 支持手动触发构建
   workflow_dispatch:
     inputs:
       build_config:
@@ -19,87 +25,79 @@ on:
         options:
           - Release
           - Debug
-      build_platform:
-        description: '构建平台'
-        required: true
-        default: 'Win32'
-        type: choice
-        options:
-          - Win32
-          - Win64
 
+# 环境变量 - 已根据最新项目配置好
 env:
-  DELPHI_VERSION: '13.1'
   BDS_PATH: 'C:\Program Files (x86)\Embarcadero\Studio\24.0'
   JCL_REPO: 'https://github.com/project-jedi/jcl.git'
-  JCL_BRANCH: 'master'
   PROJECT_FILE: 'DxAutoInstaller.dproj'
   OUTPUT_DIR: 'Bin'
 
 jobs:
   build:
-    name: 构建DxAutoInstaller
-    runs-on: [self-hosted, Windows, Delphi13.1] # 请确保您的自托管运行器有这些标签
-    permissions:
-      contents: read
-      packages: write
+    name: 构建 DxAutoInstaller
+    # 使用最通用的自托管运行器标签，解决标签匹配问题
+    # 只要你的运行器是Windows系统且已注册，就会自动匹配
+    runs-on: self-hosted
     
     steps:
-    - name: 检出代码
+    # 步骤1: 检出项目代码
+    - name: 1. 检出项目代码
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0
-        submodules: recursive
-    
-    - name: 克隆JCL依赖库
+        fetch-depth: 1
+
+    # 步骤2: 自动下载JCL依赖库
+    - name: 2. 下载JCL依赖库
       run: |
-        git clone --depth 1 --branch $env:JCL_BRANCH $env:JCL_REPO ..\jcl
+        Write-Host "正在克隆JCL仓库..."
+        git clone --depth 1 $env:JCL_REPO ..\jcl
         cd ..\jcl
-        git submodule update --init --recursive
+        git submodule update --init --depth 1
+        Write-Host "JCL下载完成，路径: $((Resolve-Path ..\jcl).Path)"
       shell: powershell
-    
-    - name: 验证Delphi安装
+
+    # 步骤3: 验证Delphi环境
+    - name: 3. 验证Delphi 13.1环境
       run: |
+        # 检查Delphi是否安装在默认路径
         if (-not (Test-Path "$env:BDS_PATH\bin\rsvars.bat")) {
-          Write-Error "Delphi $env:DELPHI_VERSION 未安装在默认路径 $env:BDS_PATH"
+          Write-Error "错误: 未找到Delphi 13.1安装"
+          Write-Error "请确保Delphi 13.1安装在: $env:BDS_PATH"
           exit 1
         }
+        
+        # 检查命令行编译器是否存在
         if (-not (Test-Path "$env:BDS_PATH\bin\dcc32.exe")) {
-          Write-Error "Delphi 命令行编译器 dcc32.exe 不存在，请确保安装的是 Professional 或更高版本"
+          Write-Error "错误: 未找到Delphi命令行编译器"
+          Write-Error "请确保安装的是Delphi Professional或更高版本"
           exit 1
         }
-        Write-Host "Delphi $env:DELPHI_VERSION 验证成功"
+        
+        Write-Host "Delphi 13.1环境验证成功"
       shell: powershell
-    
-    - name: 设置构建环境变量
+
+    # 步骤4: 编译项目
+    - name: 4. 编译项目
       run: |
-        echo "BDS=$env:BDS_PATH" >> $env:GITHUB_ENV
-        echo "FrameworkDir=C:\Windows\Microsoft.NET\Framework\v4.0.30319" >> $env:GITHUB_ENV
-        echo "FrameworkVersion=v4.5" >> $env:GITHUB_ENV
-        # 添加JCL路径到环境变量，供编译器使用
-        echo "JCL_PATH=$((Resolve-Path ..\jcl).Path)" >> $env:GITHUB_ENV
-      shell: powershell
-    
-    - name: 构建项目（使用MSBuild）
-      run: |
-        # 加载Delphi环境变量
+        @echo off
+        REM 加载Delphi环境变量
         call "%BDS_PATH%\bin\rsvars.bat"
         
-        # 设置构建参数
+        REM 设置构建参数
         set "CONFIG=${{ inputs.build_config || 'Release' }}"
-        set "PLATFORM=${{ inputs.build_platform || 'Win32' }}"
+        set "JCL_PATH=%CD%\..\jcl"
         
-        echo "开始构建: %CONFIG% %PLATFORM%"
-        echo "JCL路径: %JCL_PATH%"
+        echo 开始构建: %CONFIG% Win32
+        echo JCL路径: %JCL_PATH%
         
-        # 使用MSBuild编译项目
+        REM 使用MSBuild编译项目
         msbuild "%PROJECT_FILE%" ^
           /p:Configuration=%CONFIG% ^
-          /p:Platform=%PLATFORM% ^
-          /p:ForceVCL64BitCompiler=true ^
+          /p:Platform=Win32 ^
           /p:DCC_UnitSearchPath="%JCL_PATH%\jcl\source\common;%JCL_PATH%\jcl\source\include;%JCL_PATH%\jcl\source\windows;$(DCC_UnitSearchPath)" ^
           /t:Build ^
-          /v:normal
+          /v:minimal
         
         if %errorlevel% neq 0 (
           echo 构建失败!
@@ -108,33 +106,36 @@ jobs:
         
         echo 构建成功!
       shell: cmd
-    
-    - name: 验证构建结果
+
+    # 步骤5: 验证构建结果
+    - name: 5. 验证构建结果
       run: |
-        $exePath = Join-Path $env:OUTPUT_DIR "${{ inputs.build_platform || 'Win32' }}\${{ inputs.build_config || 'Release' }}\DxAutoInstaller.exe"
+        $exePath = Join-Path $env:OUTPUT_DIR "Win32\${{ inputs.build_config || 'Release' }}\DxAutoInstaller.exe"
+        
         if (-not (Test-Path $exePath)) {
-          Write-Error "构建产物不存在: $exePath"
+          Write-Error "错误: 构建产物不存在"
+          Write-Error "期望路径: $exePath"
           exit 1
         }
+        
         $fileInfo = Get-Item $exePath
-        Write-Host "构建产物信息:"
-        Write-Host "  路径: $exePath"
-        Write-Host "  大小: $($fileInfo.Length / 1MB):0.2f MB"
-        Write-Host "  修改时间: $($fileInfo.LastWriteTime)"
+        Write-Host "构建成功!"
+        Write-Host "文件: $exePath"
+        Write-Host "大小: $([math]::Round($fileInfo.Length / 1MB, 2)) MB"
       shell: powershell
-    
-    - name: 上传构建产物
+
+    # 步骤6: 上传构建产物
+    - name: 6. 上传构建产物
       uses: actions/upload-artifact@v4
       with:
-        name: DxAutoInstaller-${{ inputs.build_platform || 'Win32' }}-${{ inputs.build_config || 'Release' }}
-        path: |
-          ${{ env.OUTPUT_DIR }}/${{ inputs.build_platform || 'Win32' }}/${{ inputs.build_config || 'Release' }}/DxAutoInstaller.exe
-          ${{ env.OUTPUT_DIR }}/${{ inputs.build_platform || 'Win32' }}/${{ inputs.build_config || 'Release' }}/*.dll
+        name: DxAutoInstaller-Win32-${{ inputs.build_config || 'Release' }}
+        path: Bin/Win32/${{ inputs.build_config || 'Release' }}/DxAutoInstaller.exe
         retention-days: 90
         compression-level: 9
 
-  create-release:
-    name: 创建自动发布
+  # 自动发布功能 - 推送到master分支时自动创建Release
+  release:
+    name: 自动发布
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
@@ -142,35 +143,30 @@ jobs:
       contents: write
     
     steps:
-    - name: 下载所有构建产物
+    - name: 下载构建产物
       uses: actions/download-artifact@v4
       with:
-        path: artifacts
+        name: DxAutoInstaller-Win32-Release
+        path: release
     
     - name: 生成版本号
       id: version
       run: |
-        # 使用日期和提交哈希生成版本号
         DATE=$(date +'%Y.%m.%d')
         SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
         echo "VERSION=$DATE-$SHORT_SHA" >> $GITHUB_OUTPUT
-        echo "RELEASE_NAME=DxAutoInstaller $DATE ($SHORT_SHA)" >> $GITHUB_OUTPUT
     
     - name: 创建ZIP包
       run: |
-        cd artifacts
-        for dir in */; do
-          zip -r "${dir%/}.zip" "$dir"
-        done
+        cd release
+        zip -r "DxAutoInstaller-v${{ steps.version.outputs.VERSION }}.zip" .
     
     - name: 创建GitHub Release
       uses: softprops/action-gh-release@v2
       with:
         tag_name: v${{ steps.version.outputs.VERSION }}
-        name: ${{ steps.version.outputs.RELEASE_NAME }}
+        name: DxAutoInstaller v${{ steps.version.outputs.VERSION }}
         generate_release_notes: true
-        files: artifacts/*.zip
-        draft: false
-        prerelease: false
+        files: release/*.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
