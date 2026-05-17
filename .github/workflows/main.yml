@@ -1,6 +1,6 @@
-# DxAutoInstaller 自动构建工作流 - 直接可用版
-# 无需修改任何内容，复制粘贴即可使用
-name: DxAutoInstaller 自动构建
+# DxAutoInstaller 完全云端自动构建工作流
+# 无需自托管运行器，无需任何本地配置，完全使用GitHub资源
+name: DxAutoInstaller 云端自动构建
 
 # 触发条件
 on:
@@ -26,20 +26,22 @@ on:
           - Release
           - Debug
 
-# 环境变量 - 已根据最新项目配置好
+# 环境变量 - 已完全配置好
 env:
-  BDS_PATH: 'C:\Program Files (x86)\Embarcadero\Studio\24.0'
   JCL_REPO: 'https://github.com/project-jedi/jcl.git'
   PROJECT_FILE: 'DxAutoInstaller.dproj'
   OUTPUT_DIR: 'Bin'
 
 jobs:
   build:
-    name: 构建 DxAutoInstaller
-    # 使用最通用的自托管运行器标签，解决标签匹配问题
-    # 只要你的运行器是Windows系统且已注册，就会自动匹配
-    runs-on: self-hosted
+    name: 云端构建 DxAutoInstaller
+    # 使用GitHub托管的Windows运行器
+    runs-on: windows-latest
     
+    # 使用预构建的Delphi 13.1 Docker镜像
+    container:
+      image: delphilite/delphilite:d13-win-ltsc2022
+      
     steps:
     # 步骤1: 检出项目代码
     - name: 1. 检出项目代码
@@ -60,17 +62,15 @@ jobs:
     # 步骤3: 验证Delphi环境
     - name: 3. 验证Delphi 13.1环境
       run: |
-        # 检查Delphi是否安装在默认路径
-        if (-not (Test-Path "$env:BDS_PATH\bin\rsvars.bat")) {
-          Write-Error "错误: 未找到Delphi 13.1安装"
-          Write-Error "请确保Delphi 13.1安装在: $env:BDS_PATH"
+        # 检查Delphi是否安装
+        if (-not (Test-Path "C:\Program Files (x86)\Embarcadero\Studio\24.0\bin\rsvars.bat")) {
+          Write-Error "错误: Delphi 13.1 未在Docker镜像中找到"
           exit 1
         }
         
         # 检查命令行编译器是否存在
-        if (-not (Test-Path "$env:BDS_PATH\bin\dcc32.exe")) {
-          Write-Error "错误: 未找到Delphi命令行编译器"
-          Write-Error "请确保安装的是Delphi Professional或更高版本"
+        if (-not (Test-Path "C:\Program Files (x86)\Embarcadero\Studio\24.0\bin\dcc32.exe")) {
+          Write-Error "错误: Delphi命令行编译器不存在"
           exit 1
         }
         
@@ -82,7 +82,7 @@ jobs:
       run: |
         @echo off
         REM 加载Delphi环境变量
-        call "%BDS_PATH%\bin\rsvars.bat"
+        call "C:\Program Files (x86)\Embarcadero\Studio\24.0\bin\rsvars.bat"
         
         REM 设置构建参数
         set "CONFIG=${{ inputs.build_config || 'Release' }}"
